@@ -99,10 +99,13 @@ end
 
 Module.compute_EdgeCoefficients = compute_EdgeCoefficients
 
+
+-- -- Methods
+
 --[[
 	Draws a triangle between the given vertices and blends pixels with color given by a shader function in the order of the barymetric algorithm with anti-aliasing.
 ]]
-function Module.draw_AABlend(self: Canvas,
+function Module.draw_Blend_AntiAliased(self: Canvas,
 	x1: number, y1: number,
 	x2: number, y2: number,
 	x3: number, y3: number,
@@ -114,10 +117,9 @@ function Module.draw_AABlend(self: Canvas,
 		return false
 	end
 
-	-- Top-left flags
-	local TL12 = (y2 - y1 == 0 and x1 > x2) or (y2 - y1 > 0)
-	local TL23 = (y3 - y2 == 0 and x2 > x3) or (y3 - y2 > 0)
-	local TL31 = (y1 - y3 == 0 and x3 > x1) or (y1 - y3 > 0)
+	local topLeft12 = (y2 - y1 == 0 and x1 > x2) or (y2 - y1 > 0)
+	local topLeft23 = (y3 - y2 == 0 and x2 > x3) or (y3 - y2 > 0)
+	local topLeft31 = (y1 - y3 == 0 and x3 > x1) or (y1 - y3 > 0)
 
 	local e12 = 1 / math_sqrt(A12 * A12 + B12 * B12)
 	local e23 = 1 / math_sqrt(A23 * A23 + B23 * B23)
@@ -131,16 +133,16 @@ function Module.draw_AABlend(self: Canvas,
 		local px = minX + .5
 		local py = y + .5
 
-		local w12 = A12*px + B12*py + C12
-		local w23 = A23*px + B23*py + C23
-		local w31 = A31*px + B31*py + C31
+		local w12 = A12 * px + B12 * py + C12
+		local w23 = A23 * px + B23 * py + C23
+		local w31 = A31 * px + B31 * py + C31
 
 		local rowOffset = y * dstWidth
 
 		for x = minX, maxX do
-			local inside12 = (w12 > 0) or (w12 == 0 and TL12)
-			local inside23 = (w23 > 0) or (w23 == 0 and TL23)
-			local inside31 = (w31 > 0) or (w31 == 0 and TL31)
+			local inside12 = (w12 > 0) or (w12 == 0 and topLeft12)
+			local inside23 = (w23 > 0) or (w23 == 0 and topLeft23)
+			local inside31 = (w31 > 0) or (w31 == 0 and topLeft31)
 
 			if inside12 and inside23 and inside31 then
 				local c12 = math_clamp(w12 * e12 + .5, 0, 1)
@@ -159,6 +161,74 @@ function Module.draw_AABlend(self: Canvas,
 				buffer_writeu32(b, offset, compute_Blend(bit32_bor(sa, sb * 0x100, sg * 0x10000, sr * 0x1000000), buffer_readu32(b, offset)))
 			end
 			
+			w12 = w12 + A12
+			w23 = w23 + A23
+			w31 = w31 + A31
+		end
+	end
+
+	return true
+end
+
+--[[
+	Draws a triangle between the given vertices and overwrites pixels with color given by a shader function in the order of the barymetric algorithm with anti-aliasing.
+]]
+function Module.draw_Overwrite_AntiAliased(self: Canvas,
+	x1: number, y1: number,
+	x2: number, y2: number,
+	x3: number, y3: number,
+	compileShader: ShaderCompiler,
+	...: any
+): boolean
+	local area, A12, B12, C12, A23, B23, C23, A31, B31, C31 = compute_EdgeCoefficients(x1, y1, x2, y2, x3, y3)
+	if area == 0 then
+		return false
+	end
+
+	local topLeft12 = (y2 - y1 == 0 and x1 > x2) or (y2 - y1 > 0)
+	local topLeft23 = (y3 - y2 == 0 and x2 > x3) or (y3 - y2 > 0)
+	local topLeft31 = (y1 - y3 == 0 and x3 > x1) or (y1 - y3 > 0)
+
+	local e12 = 1 / math_sqrt(A12 * A12 + B12 * B12)
+	local e23 = 1 / math_sqrt(A23 * A23 + B23 * B23)
+	local e31 = 1 / math_sqrt(A31 * A31 + B31 * B31)
+
+	local b = self.Buffer
+	local dstWidth, dstHeight = self.Width, self.Height
+	local shader = compileShader(self, x1, y1, x2, y2, x3, y3, dstWidth, dstHeight, ...)
+	local minX, minY, maxX, maxY = compute_BoundingBox(dstWidth, dstHeight, x1, y1, x2, y2, x3, y3)
+	for y = minY, maxY do
+		local px = minX + .5
+		local py = y + .5
+
+		local w12 = A12 * px + B12 * py + C12
+		local w23 = A23 * px + B23 * py + C23
+		local w31 = A31 * px + B31 * py + C31
+
+		local rowOffset = y * dstWidth
+
+		for x = minX, maxX do
+			local inside12 = (w12 > 0) or (w12 == 0 and topLeft12)
+			local inside23 = (w23 > 0) or (w23 == 0 and topLeft23)
+			local inside31 = (w31 > 0) or (w31 == 0 and topLeft31)
+
+			if inside12 and inside23 and inside31 then
+				local c12 = math_clamp(w12 * e12 + .5, 0, 1)
+				local c23 = math_clamp(w23 * e23 + .5, 0, 1)
+				local c31 = math_clamp(w31 * e31 + .5, 0, 1)
+				local coverage = math_min(c12, c23, c31)
+
+				local offset = 4 * (rowOffset + x)
+				local src = shader(x, y, w12, w23, w31)
+
+				local sa = bit32_band(bit32_band(src, 0xFF) * coverage, 0xFF)
+				local sb = bit32_band(bit32_band(src // 0x100, 0xFF) * coverage, 0xFF)
+				local sg = bit32_band(bit32_band(src // 0x10000, 0xFF) * coverage, 0xFF)
+				local sr = bit32_band(bit32_band(src // 0x1000000, 0xFF) * coverage, 0xFF)
+
+				buffer_writeu32(b, offset, bit32_bor(sa, sb * 0x100, sg * 0x10000, sr * 0x1000000))
+			end
+
 			w12 = w12 + A12
 			w23 = w23 + A23
 			w31 = w31 + A31
@@ -244,6 +314,137 @@ function Module.draw_Overwrite(self: Canvas,
 		for x = minX, maxX do
 			if w12 >= 0 and w23 >= 0 and w31 >= 0 then
 				buffer_writeu32(b, 4 * (rowOffset + x), shader(x, y, w12, w23, w31))
+			end
+
+			w12 += A12
+			w23 += A23
+			w31 += A31
+		end
+	end
+
+	return true
+end
+
+--[[
+	Draws a triangle between the given vertices and blends pixels with a given color in the order of the barymetric algorithm with anti-aliasing.
+]]
+function Module.fill_Blend_AntiAliased(self: Canvas,
+	x1: number, y1: number,
+	x2: number, y2: number,
+	x3: number, y3: number,
+	color: number
+): boolean
+	local area, A12, B12, C12, A23, B23, C23, A31, B31, C31 = compute_EdgeCoefficients(x1, y1, x2, y2, x3, y3)
+	if area == 0 then
+		return false
+	end
+
+	local topLeft12 = (y2 - y1 == 0 and x1 > x2) or (y2 - y1 > 0)
+	local topLeft23 = (y3 - y2 == 0 and x2 > x3) or (y3 - y2 > 0)
+	local topLeft31 = (y1 - y3 == 0 and x3 > x1) or (y1 - y3 > 0)
+
+	local e12 = 1 / math_sqrt(A12 * A12 + B12 * B12)
+	local e23 = 1 / math_sqrt(A23 * A23 + B23 * B23)
+	local e31 = 1 / math_sqrt(A31 * A31 + B31 * B31)
+
+	local b = self.Buffer
+	local dstWidth, dstHeight = self.Width, self.Height
+	local minX, minY, maxX, maxY = compute_BoundingBox(dstWidth, dstHeight, x1, y1, x2, y2, x3, y3)
+
+	for y = minY, maxY do
+		local px = minX + .5
+		local py = y + .5
+
+		local w12 = A12 * px + B12 * py + C12
+		local w23 = A23 * px + B23 * py + C23
+		local w31 = A31 * px + B31 * py + C31
+
+		local rowOffset = y * dstWidth
+
+		for x = minX, maxX do
+			local inside12 = (w12 > 0) or (w12 == 0 and topLeft12)
+			local inside23 = (w23 > 0) or (w23 == 0 and topLeft23)
+			local inside31 = (w31 > 0) or (w31 == 0 and topLeft31)
+
+			if inside12 and inside23 and inside31 then
+				local c12 = math_clamp(w12 * e12 + .5, 0, 1)
+				local c23 = math_clamp(w23 * e23 + .5, 0, 1)
+				local c31 = math_clamp(w31 * e31 + .5, 0, 1)
+				local coverage = math_min(c12, c23, c31)
+
+				local offset = 4 * (rowOffset + x)
+
+				local sa = bit32_band(bit32_band(color, 0xFF) * coverage, 0xFF)
+				local sb = bit32_band(bit32_band(color // 0x100, 0xFF) * coverage, 0xFF)
+				local sg = bit32_band(bit32_band(color // 0x10000, 0xFF) * coverage, 0xFF)
+				local sr = bit32_band(bit32_band(color // 0x1000000, 0xFF) * coverage, 0xFF)
+
+				buffer_writeu32(b, offset, compute_Blend(bit32_bor(sa, sb * 0x100, sg * 0x10000, sr * 0x1000000), buffer_readu32(b, offset)))
+			end
+
+			w12 += A12
+			w23 += A23
+			w31 += A31
+		end
+	end
+
+	return true
+end
+
+--[[
+	Draws a triangle between the given vertices and blends pixels with a given color in the order of the barymetric algorithm with anti-aliasing.
+]]
+function Module.fill_Overwrite_AntiAliased(self: Canvas,
+	x1: number, y1: number,
+	x2: number, y2: number,
+	x3: number, y3: number,
+	color: number
+): boolean
+	local area, A12, B12, C12, A23, B23, C23, A31, B31, C31 = compute_EdgeCoefficients(x1, y1, x2, y2, x3, y3)
+	if area == 0 then
+		return false
+	end
+
+	local topLeft12 = (y2 - y1 == 0 and x1 > x2) or (y2 - y1 > 0)
+	local topLeft23 = (y3 - y2 == 0 and x2 > x3) or (y3 - y2 > 0)
+	local topLeft31 = (y1 - y3 == 0 and x3 > x1) or (y1 - y3 > 0)
+
+	local e12 = 1 / math_sqrt(A12 * A12 + B12 * B12)
+	local e23 = 1 / math_sqrt(A23 * A23 + B23 * B23)
+	local e31 = 1 / math_sqrt(A31 * A31 + B31 * B31)
+
+	local b = self.Buffer
+	local dstWidth, dstHeight = self.Width, self.Height
+	local minX, minY, maxX, maxY = compute_BoundingBox(dstWidth, dstHeight, x1, y1, x2, y2, x3, y3)
+
+	for y = minY, maxY do
+		local px = minX + .5
+		local py = y + .5
+
+		local w12 = A12 * px + B12 * py + C12
+		local w23 = A23 * px + B23 * py + C23
+		local w31 = A31 * px + B31 * py + C31
+
+		local rowOffset = y * dstWidth
+
+		for x = minX, maxX do
+			local inside12 = (w12 > 0) or (w12 == 0 and topLeft12)
+			local inside23 = (w23 > 0) or (w23 == 0 and topLeft23)
+			local inside31 = (w31 > 0) or (w31 == 0 and topLeft31)
+
+			if inside12 and inside23 and inside31 then
+				local coverage = math_min(
+					math_clamp(w12 * e12 + .5, 0, 1),
+					math_clamp(w23 * e23 + .5, 0, 1),
+					math_clamp(w31 * e31 + .5, 0, 1)
+				)
+
+				local sa = bit32_band(bit32_band(color, 0xFF) * coverage, 0xFF)
+				local sb = bit32_band(bit32_band(color // 0x100, 0xFF) * coverage, 0xFF)
+				local sg = bit32_band(bit32_band(color // 0x10000, 0xFF) * coverage, 0xFF)
+				local sr = bit32_band(bit32_band(color // 0x1000000, 0xFF) * coverage, 0xFF)
+
+				buffer_writeu32(b, 4 * (rowOffset + x), bit32_bor(sa, sb * 0x100, sg * 0x10000, sr * 0x1000000))
 			end
 
 			w12 += A12
@@ -361,24 +562,9 @@ function Module.fill_Overwrite(self: Canvas,
 end
 
 --[[
-	Outlines a triangle between the given vertices and blends pixels with the given color.
-]]
-function Module.outline_Blend(self: Canvas,
-	x1: number, y1: number,
-	x2: number, y2: number,
-	x3: number, y3: number,
-	color: number
-): boolean
-	Line.fill_Blend(self, x1, y1, x2, y2, color)
-	Line.fill_Blend(self, x2, y2, x3, y3, color)
-	Line.fill_Blend(self, x3, y3, x1, y1, color)
-	return true
-end
-
---[[
 	Outlines a triangle between the given vertices and blends pixels with color given by a shader function.
 ]]
-function Module.outline_BlendShader(self: Canvas,
+function Module.draw_Blend_Outline(self: Canvas,
 	x1: number, y1: number,
 	x2: number, y2: number,
 	x3: number, y3: number,
@@ -392,24 +578,9 @@ function Module.outline_BlendShader(self: Canvas,
 end
 
 --[[
-	Outlines a triangle between the given vertices and overwrites pixels with the given color.
-]]
-function Module.outline_Overwrite(self: Canvas,
-	x1: number, y1: number,
-	x2: number, y2: number,
-	x3: number, y3: number,
-	color: number
-): boolean
-	Line.fill_Overwrite(self, x1, y1, x2, y2, color)
-	Line.fill_Overwrite(self, x2, y2, x3, y3, color)
-	Line.fill_Overwrite(self, x3, y3, x1, y1, color)
-	return true
-end
-
---[[
 	Outlines a triangle between the given vertices and overwrites pixels with color given by a shader function.
 ]]
-function Module.outline_OverwriteShader(self: Canvas,
+function Module.draw_Overwrite_Outline(self: Canvas,
 	x1: number, y1: number,
 	x2: number, y2: number,
 	x3: number, y3: number,
@@ -419,6 +590,36 @@ function Module.outline_OverwriteShader(self: Canvas,
 	Line.draw_Overwrite(self, x1, y1, x2, y2, compileShader, ...)
 	Line.draw_Overwrite(self, x2, y2, x3, y3, compileShader, ...)
 	Line.draw_Overwrite(self, x3, y3, x1, y1, compileShader, ...)
+	return true
+end
+
+--[[
+	Outlines a triangle between the given vertices and blends pixels with the given color.
+]]
+function Module.fill_Blend_Outline(self: Canvas,
+	x1: number, y1: number,
+	x2: number, y2: number,
+	x3: number, y3: number,
+	color: number
+): boolean
+	Line.fill_Blend(self, x1, y1, x2, y2, color)
+	Line.fill_Blend(self, x2, y2, x3, y3, color)
+	Line.fill_Blend(self, x3, y3, x1, y1, color)
+	return true
+end
+
+--[[
+	Outlines a triangle between the given vertices and overwrites pixels with the given color.
+]]
+function Module.fill_Overwrite_Outline(self: Canvas,
+	x1: number, y1: number,
+	x2: number, y2: number,
+	x3: number, y3: number,
+	color: number
+): boolean
+	Line.fill_Overwrite(self, x1, y1, x2, y2, color)
+	Line.fill_Overwrite(self, x2, y2, x3, y3, color)
+	Line.fill_Overwrite(self, x3, y3, x1, y1, color)
 	return true
 end
 
