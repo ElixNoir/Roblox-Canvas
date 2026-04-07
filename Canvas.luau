@@ -11,7 +11,6 @@
 	Work in progress.
 	- Anti-aliasing is not fully supported yet
 	- There is no parallelization
-	- I haven't tested it
 	- Some shaders are missing because I'm too lazy to add them
 	
 	Notes:
@@ -52,27 +51,14 @@ local buffer_readu32 = buffer.readu32
 local buffer_tostring = buffer.tostring
 local buffer_writeu32 = buffer.writeu32
 
-local function buffer_rep(b: buffer, offset: number, byteCount: number, count: number)
-	--assert(byteCount > 0, "'byteCount' cannot be less than or equal to 0.")
-	count *= byteCount
-	local filled = byteCount
-	while filled * 2 <= count do
-		buffer_copy(b, offset + filled, b, offset, filled)
-		filled = filled * 2
-	end
-	if filled < count then
-		buffer_copy(b, offset + filled, b, offset, count - filled)
-	end
-end
-local function buffer_reverse(b: buffer): buffer
-	return buffer_fromstring(buffer_tostring(b):reverse())
-end
+local content_fromObject = Content.fromObject
+local content_None = Content.none
 
 local math_atan2 = math.atan2
 local math_ceil = math.ceil
 local math_clamp = math.clamp
 local math_cos = math.cos
-local math_huge = math.huge
+local math_Huge = math.huge
 local math_max = math.max
 local math_min = math.min
 local math_rad = math.rad
@@ -84,10 +70,32 @@ local table_find = table.find
 local table_insert = table.insert
 local table_move = table.move
 
-Module.buffer_rep = buffer_rep
+local vector2_new = Vector2.new
+local vector2_Zero = Vector2.zero
+
+--[[
+	Repeat a certain number of bytes specified, width, repeatCount times.
+	
+	Uses O(log(n)) copy doubling technique, since there is no way to use something equal to rep stosd.
+]]
+local function buffer_rep(b: buffer, offset: number, width: number, repeatCount: number)
+	repeatCount *= width
+	while width * 2 <= repeatCount do
+		buffer_copy(b, offset + width, b, offset, width)
+		width *= 2
+	end
+	if width < repeatCount then
+		buffer_copy(b, offset + width, b, offset, repeatCount - width)
+	end
+end Module.buffer_rep = buffer_rep
+
+local function buffer_reverse(b: buffer): buffer
+	return buffer_fromstring(buffer_tostring(b):reverse())
+end Module.buffer_reverse = buffer_reverse
 
 --[[
 	Get the unsigned 32-bit integer value corresponding to unsigned 8-bit integer RGBA values.
+	returns: 32-bit ABGR value
 ]]
 local function color_FromRGBA(r: number, g: number, b: number, a: number): number
 	return r + g * 0x100 + b * 0x10000 + a * 0x1000000
@@ -97,6 +105,7 @@ Module.color_FromRGBA = color_FromRGBA
 
 --[[
 	Blend two 32-bit ABGR colors.
+	return: 32-bit ABGR color
 ]]
 local function compute_Blend(src: number, dst: number): number
 	-- Extract channels
@@ -123,9 +132,7 @@ local function compute_Blend(src: number, dst: number): number
 	-- Pack back into 32-bit RGBA
 	
 	return bit32_bor(a, b * 0x100, g * 0x10000, r * 0x1000000)
-end
-
-Module.compute_Blend = compute_Blend
+end Module.compute_Blend = compute_Blend
 
 local function compute_PremultipliedColor(color: number): number
 	local a = bit32_band(color, 0xFF)
@@ -138,9 +145,7 @@ local function compute_PremultipliedColor(color: number): number
 	r *= a // 0x100
 	
 	return bit32_bor(a, b * 0x100, g * 0x10000, r * 0x1000000)
-end
-
-Module.compute_PremultipliedColor = compute_PremultipliedColor
+end Module.compute_PremultipliedColor = compute_PremultipliedColor
 
 
 -- -- Functions
@@ -152,8 +157,41 @@ end
 function Module.fromBuffer(b: buffer, width: number, height: number): Canvas
 	return setmetatable({
 		Buffer = b,
-		Content = Content.none,
-		EditableImage = AssetService:CreateEditableImage({Size = Vector2.new(width, height)}),
+		Content = content_None,
+		EditableImage = AssetService:CreateEditableImage({Size = vector2_new(width, height)}),
+		Width = width, Height = height
+	}, Module)
+end
+
+function Module.fromVertices(vertices: {number}): Canvas
+	local length = #vertices
+	
+	local max_X, min_X = 0, math_Huge
+	for index = 1, length, 2 do
+		local x = vertices[index]
+		if x > max_X then
+			max_X = x
+		elseif x < min_X then
+			min_X = x
+		end
+	end
+	
+	local max_Y, min_Y = 0, math_Huge
+	for index = 2, length, 2 do
+		local y = vertices[index]
+		if y > max_Y then
+			max_Y = y
+		elseif y < min_Y then
+			min_Y = y
+		end
+	end
+	
+	local width, height = max_X - min_X, max_Y - min_Y
+	
+	return setmetatable({
+		Buffer = buffer_create(width * height * 4),
+		Content = content_None,
+		EditableImage = AssetService:CreateEditableImage({Size = vector2_new(width, height)}),
 		Width = width, Height = height
 	}, Module)
 end
@@ -161,8 +199,8 @@ end
 function Module.new(width: number, height: number): Canvas
 	return setmetatable({
 		Buffer = buffer_create(width * height * 4),
-		Content = Content.none,
-		EditableImage = AssetService:CreateEditableImage({Size = Vector2.new(width, height)}),
+		Content = content_None,
+		EditableImage = AssetService:CreateEditableImage({Size = vector2_new(width, height)}),
 		Width = width, Height = height
 	}, Module)
 end
@@ -367,8 +405,8 @@ end
 ]]
 function Module.flush(self: Canvas)
 	local editableImage = self.EditableImage
-	editableImage:WritePixelsBuffer(Vector2.zero, editableImage.Size, self.Buffer)
-	self.Content = Content.fromObject(editableImage)
+	editableImage:WritePixelsBuffer(vector2_Zero, editableImage.Size, self.Buffer)
+	self.Content = content_fromObject(editableImage)
 end
 
 --[[
