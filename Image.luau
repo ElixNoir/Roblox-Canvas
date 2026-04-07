@@ -26,8 +26,6 @@ local buffer_copy = buffer.copy
 local buffer_readu32 = buffer.readu32
 local buffer_writeu32 = buffer.writeu32
 
-local compute_Blend = Canvas.compute_Blend
-
 local math_abs = math.abs
 local math_ceil = math.ceil
 local math_clamp = math.clamp
@@ -37,6 +35,9 @@ local math_max = math.max
 local math_min = math.min
 local math_round = math.round
 local math_sin = math.sin
+
+local Canvas_compute_Blend = Canvas.compute_Blend
+local Canvas_buffer_rep = Canvas.buffer_rep
 
 
 -- -- Methods
@@ -111,7 +112,7 @@ function Module.fill_Blend(
 
 		for x = 0, q, 4 do
 			local di = dstRow + x
-			buffer_writeu32(dstBuf, di, compute_Blend(buffer_readu32(srcBuf, srcRow + x), buffer_readu32(dstBuf, di)))
+			buffer_writeu32(dstBuf, di, Canvas_compute_Blend(buffer_readu32(srcBuf, srcRow + x), buffer_readu32(dstBuf, di)))
 		end
 	end
 
@@ -281,7 +282,7 @@ local function fillTexturedTriangle_Blend(
 			for x = xStart, xEnd do
 				local color = buffer_readu32(srcBuf, math_floor(v * (srcHeight - 1)) * srcWidth + math_floor(u * (srcWidth - 1)))
 				local offset = y * width + x
-				buffer_writeu32(dstBuf, offset, compute_Blend(color, buffer_readu32(dstBuf, offset)))
+				buffer_writeu32(dstBuf, offset, Canvas_compute_Blend(color, buffer_readu32(dstBuf, offset)))
 				u = u + du
 				v = v + dv
 			end
@@ -301,9 +302,7 @@ local function fillTexturedTriangle_Blend(
 		drawFlatTriangle(x1, y1, u1, v1, x2, y2, u2, v2, vx, y2, vu, vv)
 		drawFlatTriangle(x3, y3, u3, v3, x2, y2, u2, v2, vx, y2, vu, vv)
 	end
-end
-
-Module.fillTexturedTriangle_Blend = fillTexturedTriangle_Blend
+end Module.fillTexturedTriangle_Blend = fillTexturedTriangle_Blend
 
 local function fillTexturedTriangle_Overwrite(
 	self: Canvas, src: Canvas,
@@ -382,9 +381,7 @@ local function fillTexturedTriangle_Overwrite(
 		drawFlatTriangle(x1, y1, u1, v1, x2, y2, u2, v2, vx, y2, vu, vv)
 		drawFlatTriangle(x3, y3, u3, v3, x2, y2, u2, v2, vx, y2, vu, vv)
 	end
-end
-
-Module.fillTexturedTriangle_Overwrite = fillTexturedTriangle_Overwrite
+end Module.fillTexturedTriangle_Overwrite = fillTexturedTriangle_Overwrite
 
 function Module.fillRotatedImage_Blend(
 	self: Canvas, src: Canvas,
@@ -452,6 +449,43 @@ function Module.fillRotatedImage_Overwrite(
 		X0, Y0, X2, Y2, X3, Y3,
 		0, 0, 1, 1, 0, 1
 	)
+end
+
+--[[
+	Repeat the src canvas image count times in the x and y directions.
+]]
+function Module.repeat_Square(self: Canvas, src: Canvas, offset: number, count: number)
+	local dst_Buffer = self.Buffer
+	local dst_Width = self.Width
+	local src_Buffer = src.Buffer
+	local src_Height = src.Height
+	local src_Width = src.Width
+	local q = src_Width * 4
+
+	for y = 0, (src_Height - 1) * 4, 4 do
+		local offset = offset + dst_Width * y
+		buffer_copy(dst_Buffer, offset, src_Buffer, src_Width * y, q)
+		Canvas_buffer_rep(dst_Buffer, offset, q, count)
+	end
+
+	Canvas_buffer_rep(dst_Buffer, offset, dst_Width * src_Height * 4, count)
+end
+
+--[[
+	Repeat the src canvas image count times in the x direction.
+]]
+function Module.repeat_X(self: Canvas, src: Canvas, offset: number, count: number)
+	local dst_Buffer = self.Buffer
+	local dst_Width = self.Width
+	local src_Buffer = src.Buffer
+	local src_Width = src.Width
+	local q = src_Width * 4
+
+	for y = 0, (src.Height - 1) * 4, 4 do
+		local offset = offset + dst_Width * y
+		buffer_copy(dst_Buffer, offset, src_Buffer, src_Width * y, q)
+		Canvas_buffer_rep(dst_Buffer, offset, q, count)
+	end
 end
 
 
